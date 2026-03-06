@@ -16,8 +16,11 @@
 """NAT register function for chat researcher agent."""
 
 import logging
+import os
 from typing import Any
 
+from deepchecks_llm_client.data_types import EnvType
+from deepchecks_llm_client.otel import LanggraphIntegration
 from langchain_core.messages import HumanMessage
 from pydantic import Field
 
@@ -51,6 +54,15 @@ logger = logging.getLogger(__name__)
 _ensure_otel_redaction_registered()
 
 
+LanggraphIntegration().register_dc_exporter(
+    host="https://app.llm.deepchecks.com/",
+    api_key=os.environ.get("DEEPCHECKS_API_KEY"),
+    app_name="AIQ Demo",
+    version_name="Playground",
+    env_type=EnvType.EVAL,
+    log_to_console=True,
+    isolated=True,
+)
 ########################################################
 # Intent Classifier
 ########################################################

@@ -38,6 +38,7 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi import Request
 from fastapi.responses import StreamingResponse
+from pydantic import AliasChoices
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
@@ -60,7 +61,7 @@ class JobSubmitRequest(BaseModel):
             "examples": [
                 {
                     "agent_type": "deep_researcher",
-                    "input": "What are the latest advances in quantum computing?",
+                    "content": "What are the latest advances in quantum computing?",
                     "job_id": None,
                     "expiry_seconds": 86400,
                 }
@@ -68,8 +69,13 @@ class JobSubmitRequest(BaseModel):
         }
     )
 
-    agent_type: str = Field(..., description="Agent type (e.g., 'deep_researcher')")
-    input: str = Field(..., min_length=1, description="Input query for the agent")
+    agent_type: str = Field("shallow_researcher", description="Agent type (e.g., 'deep_researcher')")
+    content: str = Field(
+        ...,
+        min_length=1,
+        description="Input query for the agent",
+        validation_alias=AliasChoices("content", "input"),
+    )
     job_id: str | None = Field(
         None,
         pattern=r"^[a-zA-Z0-9_-]+$",
@@ -313,7 +319,7 @@ async def register_job_routes(app: FastAPI, builder: WorkflowBuilder, worker: Fa
             db_url,
             config_path,
             resolved_job_id,
-            req.input,
+            req.content,
             agent_config.class_path,
             agent_config.config_name,
             None,  # parent_span_id

@@ -79,7 +79,8 @@ RUN uv pip install --no-deps -e . \
     && uv pip install -e ./sources/tavily_web_search \
     && uv pip install -e "./sources/knowledge_layer[all]" \
     && uv pip install -e ./frontends/aiq_api \
-    && uv pip install "psycopg[binary]>=3.0.0"
+    && uv pip install "psycopg[binary]>=3.0.0" \
+    && uv pip install "deepchecks-llm-client>=0.41.10"
 
 RUN /app/.venv/bin/python -c "import aiq_api; import knowledge_layer; print('✓ Base packages installed')"
 

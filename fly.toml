@@ -1,0 +1,39 @@
+app = "aiq-agent"
+primary_region = "iad"
+
+[build]
+  dockerfile = "deploy/Dockerfile"
+  target = "release"
+
+[env]
+  APP_ENV = "production"
+  CONFIG_FILE = "/app/configs/config_web_default_llamaindex.yml"
+  HOST = "0.0.0.0"
+  PORT = "8000"
+  LOG_LEVEL = "INFO"
+  AIQ_CHECKPOINT_DB = "./data/checkpoints.db"
+  AIQ_SUMMARY_DB = "sqlite+aiosqlite:///./data/summaries.db"
+  NAT_JOB_STORE_DB_URL = "sqlite+aiosqlite:///./data/jobs.db"
+  DASK_NWORKERS = "1"
+  DASK_NTHREADS = "4"
+  DASK_DISTRIBUTED__LOGGING__DISTRIBUTED = "warning"
+
+[[mounts]]
+  source = "aiq_data"
+  destination = "/app/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2

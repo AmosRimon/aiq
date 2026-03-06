@@ -285,10 +285,9 @@ async def run_agent_job(
         async with WorkflowBuilder.from_config(config=config) as builder:
             fn_config = builder.get_function_config(agent_config_name)
 
-            # Get LLMs for deep_researcher (orchestrator required)
-            orchestrator_llm = await builder.get_llm(
-                fn_config.orchestrator_llm, wrapper_type=LLMFrameworkEnum.LANGCHAIN
-            )
+            # Get LLMs - use orchestrator_llm if available (deep_researcher), otherwise fall back to llm
+            orchestrator_llm_ref = getattr(fn_config, "orchestrator_llm", None) or getattr(fn_config, "llm", None)
+            orchestrator_llm = await builder.get_llm(orchestrator_llm_ref, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
             planner_llm = None
             researcher_llm = None
             if hasattr(fn_config, "planner_llm") and fn_config.planner_llm:
@@ -532,36 +531,33 @@ def _create_agent_instance(
     callbacks: list,
 ):
     """
-    Create an agent instance, supporting different constructor patterns.
-
-    Tries in order:
-    1. llm_provider + tools pattern (DeepResearcherAgent style)
-    2. llm + tools pattern (simpler agents)
+    Create an agent instance by inspecting the constructor and passing only supported kwargs.
     """
-    # Try llm_provider pattern first (DeepResearcherAgent)
-    try:
-        return agent_cls(
-            llm_provider=llm_provider,
-            tools=tools,
-            max_loops=getattr(fn_config, "max_loops", 3),
-            verbose=verbose,
-            callbacks=callbacks,
-        )
-    except TypeError:
-        pass
+    import inspect
 
-    # Try simpler llm + tools pattern
-    try:
-        return agent_cls(
-            llm=llm,
-            tools=tools,
-            callbacks=callbacks,
-        )
-    except TypeError:
-        pass
+    sig = inspect.signature(agent_cls.__init__)
+    params = set(sig.parameters.keys()) - {"self"}
 
-    # Fallback: just callbacks
-    return agent_cls(callbacks=callbacks)
+    kwargs: dict = {}
+    if "llm_provider" in params:
+        kwargs["llm_provider"] = llm_provider
+    elif "llm" in params:
+        kwargs["llm"] = llm
+
+    if "tools" in params:
+        kwargs["tools"] = tools
+    if "callbacks" in params:
+        kwargs["callbacks"] = callbacks
+    if "verbose" in params:
+        kwargs["verbose"] = verbose
+    if "max_loops" in params:
+        kwargs["max_loops"] = getattr(fn_config, "max_loops", 3)
+    if "max_llm_turns" in params:
+        kwargs["max_llm_turns"] = getattr(fn_config, "max_llm_turns", 10)
+    if "max_tool_iterations" in params:
+        kwargs["max_tool_iterations"] = getattr(fn_config, "max_tool_iterations", 5)
+
+    return agent_cls(**kwargs)
 
 
 async def _run_agent(

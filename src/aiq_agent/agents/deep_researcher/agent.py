@@ -347,15 +347,21 @@ class DeepResearcherAgent:
             logger.info("Query: %s...", query[:100])
             logger.info("=" * 80)
 
+        from langchain_core.runnables.config import ensure_config, merge_configs
+
+        parent_config = ensure_config()
+
         result = None
         last_error = None
         try:
             max_retries = 5
             for attempt in range(max_retries):
                 try:
+                    local_config = {"callbacks": self.callbacks} if self.callbacks else {}
+                    config = merge_configs(parent_config, local_config)
                     result = await agent.ainvoke(
                         state,
-                        config={"callbacks": self.callbacks} if self.callbacks else None,
+                        config=config,
                     )
                     last_error = None
                 except Exception as ex:
@@ -400,9 +406,11 @@ class DeepResearcherAgent:
                     next_state = result.model_dump() if hasattr(result, "model_dump") else dict(result)
                     messages = getattr(result, "messages", next_state.get("messages", []))
                 next_state["messages"] = list(messages) + [HumanMessage(content=feedback_msg)]
+                local_config = {"callbacks": self.callbacks} if self.callbacks else {}
+                config = merge_configs(parent_config, local_config)
                 result = await agent.ainvoke(
                     next_state,
-                    config={"callbacks": self.callbacks} if self.callbacks else None,
+                    config=config,
                 )
 
             if result is None and last_error is not None:

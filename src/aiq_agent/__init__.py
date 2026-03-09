@@ -19,6 +19,66 @@ This module uses lazy imports to avoid loading heavy dependencies (langgraph, et
 when only lightweight submodules like `aiq_agent.knowledge` are needed.
 """
 
+import logging
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+_logger = logging.getLogger(__name__)
+
+
+def _find_project_root() -> Path | None:
+    """Walk up from this file to find the project root (contains pyproject.toml)."""
+    current = Path(__file__).resolve().parent
+    for parent in (current, *current.parents):
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return None
+
+
+_project_root = _find_project_root()
+if _project_root:
+    load_dotenv(_project_root / "deploy" / ".env", override=False)
+
+
+def _init_deepchecks() -> None:
+    """Initialize Deepchecks LLM observability if configured."""
+    dc_api_key = os.environ.get("DEEPCHECKS_API_KEY")
+    if not dc_api_key:
+        _logger.info("DEEPCHECKS_API_KEY not set, skipping Deepchecks integration")
+        return
+
+    try:
+        import sys
+        # Use local copy of deepchecks_llm_client instead of installed package
+        _client_path = str(Path(__file__).resolve().parent.parent / "client")
+        if _client_path not in sys.path:
+            sys.path.insert(0, _client_path)
+
+        from deepchecks_llm_client.data_types import EnvType
+        from deepchecks_llm_client.otel import LanggraphIntegration
+
+        dc_host = os.environ.get("DC_STAGING_HOST", "https://app.llm.deepchecks.com/")
+        dc_app_name = os.environ.get("DC_APP_NAME", "rotem_nvidia1")
+        dc_version_name = os.environ.get("DC_VERSION_NAME", "v1")
+
+        LanggraphIntegration().register_dc_exporter(
+            host=dc_host,
+            api_key=dc_api_key,
+            app_name=dc_app_name,
+            version_name=dc_version_name,
+            env_type=EnvType.EVAL,
+            log_to_console=True,
+            isolated=True,
+        )
+        _logger.info("Deepchecks integration initialized (app=%s, version=%s)", dc_app_name, dc_version_name)
+    except Exception:
+        _logger.warning("Deepchecks integration failed to initialize, continuing without it", exc_info=True)
+
+
+_init_deepchecks()
+
 __all__ = [
     "chat_deepresearcher_agent",
     "shallow_research_agent",

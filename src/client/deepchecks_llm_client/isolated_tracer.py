@@ -294,12 +294,6 @@ def _patch_langchain_tracer_for_isolation(tracer: "OpenInferenceTracer") -> None
         return
     _PATCHED_TRACERS.add(tracer_id)
 
-    # Enable inline callback execution. By default, OpenInferenceTracer inherits
-    # run_inline=False from BaseCallbackHandler, causing callbacks to run in a thread
-    # pool via run_in_executor. This breaks ContextVar propagation. Setting run_inline=True
-    # makes callbacks execute synchronously, matching Langfuse and LangGraph's own handlers.
-    tracer.run_inline = True
-
     from openinference.instrumentation.langchain._tracer import _as_utc_nano  # pylint: disable=import-outside-toplevel
 
     def patched_start_trace(run) -> None:
@@ -316,7 +310,7 @@ def _patch_langchain_tracer_for_isolation(tracer: "OpenInferenceTracer") -> None
 
             if parent_run_id and (parent := tracer._spans_by_run.get(parent_run_id)):  # pylint: disable=protected-access
                 # Normal case: parent found via run.parent_run_id
-                parent_context = trace_api.set_span_in_context(parent)
+                parent_context = trace_api.set_span_in_context(parent, _isolated_context.get() or Context())
             else:
                 # PATCH: Use _isolated_context for parent lookup.
                 isolated_ctx = _isolated_context.get()
@@ -389,13 +383,13 @@ def _patch_google_adk_for_isolation(tracer: t.Any) -> None:
         logger.warning("GoogleADKInstrumentor._tracer is not an OITracer, skipping base tracer patch")
 
     def _isolated_get_current_span() -> "trace_api.Span":
-        """Get the current span from isolated context, falling back to global context."""
+        """Get the current span from isolated context, returning INVALID_SPAN if none found."""
         isolated_ctx = _isolated_context.get()
         if isolated_ctx is not None:
             span = trace_api.get_current_span(isolated_ctx)
             if span.is_recording():
                 return span
-        return trace_api.get_current_span()
+        return trace_api.INVALID_SPAN
 
     try:
         import openinference.instrumentation.google_adk as adk_init  # pylint: disable=import-outside-toplevel

@@ -282,6 +282,13 @@ class OtelIntegration:
         for instrumentor in self.instrumentors:
             instrumentor.instrument(tracer_provider=tracer_provider)
 
+            # For LangChain, enable inline callback execution. By default,
+            # OpenInferenceTracer inherits run_inline=False, causing callbacks to run
+            # in a thread pool via run_in_executor which breaks ContextVar propagation.
+            tracer = getattr(instrumentor, '_tracer', None)
+            if tracer is not None and hasattr(tracer, 'run_inline'):
+                tracer.run_inline = True
+
             # Apply context isolation
             if isolated:
                 apply_instrumentor_isolation(instrumentor)

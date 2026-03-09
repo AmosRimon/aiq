@@ -287,14 +287,10 @@ class ShallowResearcherAgent:
             self.source_registry.clear()
             registry = self.source_registry
 
-        from langchain_core.runnables.config import ensure_config, merge_configs
-
         recursion_limit = (self.max_llm_turns * 2) + 10
-        parent_config = ensure_config()
-        local_config = {"recursion_limit": recursion_limit}
+        config = {"recursion_limit": recursion_limit}
         if self.callbacks:
-            local_config["callbacks"] = self.callbacks
-        config = merge_configs(parent_config, local_config)
+            config["callbacks"] = self.callbacks
         result = await self._graph.ainvoke(state, config=config)
 
         # Post-process: verify citations against source registry

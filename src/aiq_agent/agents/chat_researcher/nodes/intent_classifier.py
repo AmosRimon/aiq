@@ -117,11 +117,7 @@ class IntentClassifier:
         messages: list[BaseMessage] = [SystemMessage(content=system_content)] + trimmed_conversation
 
         try:
-            from langchain_core.runnables.config import ensure_config, merge_configs
-
-            parent_config = ensure_config()
-            local_config = {"callbacks": self.callbacks} if self.callbacks else {}
-            config = merge_configs(parent_config, local_config)
+            config = {"callbacks": self.callbacks} if self.callbacks else {}
             response = await asyncio.wait_for(
                 self.llm.ainvoke(messages, config=config),
                 timeout=self.llm_timeout,

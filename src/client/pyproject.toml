@@ -1,0 +1,49 @@
+[build-system]
+requires = [
+    "setuptools",
+    "dunamai",
+    "wheel",
+]
+
+[project]
+description = "The SDK client for communicating with Deepchecks LLM service"
+name = 'deepchecks-llm-client'
+dynamic = ['version', 'dependencies']
+requires-python = ">=3.8"
+authors = [{ name = "deepchecks", email = "info@deepchecks.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+langchain = [
+    "langchain",
+]
+sagemaker = [
+    "sagemaker>=2.237.0,<3.0.0",
+]
+hadron = [
+    "sagemaker>=2.237.0,<3.0.0",
+]
+otel = [
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "litellm",
+    "openinference-instrumentation-crewai",
+    "openinference-instrumentation-litellm",
+    "openinference-instrumentation-langchain",
+    "openinference-instrumentation-google-adk",
+]
+widgets = [
+    "ipywidgets>=7.0.0",
+    "IPython",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include =  ["deepchecks_llm_client", "deepchecks_llm_client.*"]
+
+[tool.setuptools.dynamic]
+    dependencies = {file = ["requirements.txt"]}

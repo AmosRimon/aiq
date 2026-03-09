@@ -275,8 +275,8 @@ class OtelIntegration:
         tracer_provider = TracerProvider()
 
         # Enable threading context propagation unconditionally.
-        # When isolated=True, propagates _isolated_context; when False, propagates global OTEL context.
-        enable_threading_propagation(isolated=isolated)
+        # Uses copy_context() to propagate all ContextVars across thread boundaries.
+        enable_threading_propagation()
 
         # Instrument with all the instrumentor classes for this framework
         for instrumentor in self.instrumentors:

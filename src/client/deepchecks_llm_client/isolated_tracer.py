@@ -4,9 +4,9 @@ This module provides complete context isolation to prevent trace mixing between 
 and other OTEL instrumentation (e.g., Langfuse, Traceloop).
 
 Features:
-1. IsolatedOITracer - wraps OITracer to use isolated ContextVar instead of global OTEL context
-2. Threading patches - automatically propagate isolated context across threads
-3. Thread-local fallback - handles asyncio task boundary issues in LangChain
+1. In-place OITracer patching - patches start_span/start_as_current_span to use isolated ContextVar
+2. Threading patches - automatically propagate all ContextVars across threads via copy_context()
+3. Framework-specific patches - LangChain callback patching, Google ADK get_current_span redirect
 
 IMPORTANT: This module ONLY affects Deepchecks tracing. Other OTEL instrumentation
 (like Langfuse) is NOT affected and works exactly as before.
@@ -44,27 +44,12 @@ _isolated_context: ContextVar[t.Optional[Context]] = ContextVar("deepchecks_isol
 # Threading Patches
 # =============================================================================
 
-def _wrap_callable_isolated(fn: t.Callable) -> t.Callable:
+def _wrap_callable(fn: t.Callable) -> t.Callable:
     """Wrap a callable to propagate all ContextVars into the worker thread.
 
     Uses copy_context() to propagate ALL ContextVars (including _isolated_context,
     LangChain's var_child_runnable_config, and any others) across thread boundaries.
     This is the same approach LangChain's own ContextThreadPoolExecutor uses.
-    """
-    ctx = copy_context()
-
-    def wrapped(*args, **kwargs):
-        return ctx.run(fn, *args, **kwargs)
-
-    return wrapped
-
-
-def _wrap_callable_global(fn: t.Callable) -> t.Callable:
-    """Wrap a callable to propagate all ContextVars into the worker thread.
-
-    Uses copy_context() to propagate ALL ContextVars (including LangChain's
-    var_child_runnable_config, global OTEL context, and any others) across
-    thread boundaries.
     """
     ctx = copy_context()
 
@@ -106,19 +91,12 @@ class _ThreadingPatcher:
     """
     Singleton that patches threading to propagate context across threads.
 
-    Supports two modes controlled by the `isolated` flag:
-    - isolated=True: Propagates ONLY _isolated_context (for Deepchecks isolation mode).
-      Other instrumentation (like Langfuse) is not affected.
-    - isolated=False: Propagates the global OTEL context via context_api.get_current()
-      and context_api.attach/detach. This restores the default threading propagation
-      that was previously unconditional.
-
-    Users will only use one mode per process (global OR isolated, never both).
+    Uses copy_context() to propagate ALL ContextVars (including _isolated_context,
+    LangChain's var_child_runnable_config, and any others) across thread boundaries.
     """
 
     _instance: t.Optional[_ThreadingPatcher] = None
     _is_patched: bool = False
-    _isolated: bool = False
     _original_submit: t.Optional[t.Callable] = None
     _original_thread_init: t.Optional[t.Callable] = None
 
@@ -127,24 +105,17 @@ class _ThreadingPatcher:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def patch(self, isolated: bool = False) -> None:
-        """Apply threading patches. Idempotent - safe to call multiple times.
-
-        Args:
-            isolated: If True, propagate _isolated_context (Deepchecks isolation mode).
-                      If False, propagate global OTEL context (default mode).
-        """
+    def patch(self) -> None:
+        """Apply threading patches. Idempotent - safe to call multiple times."""
         if self._is_patched:
             return
-
-        self._isolated = isolated
 
         try:
             self._original_submit = concurrent.futures.ThreadPoolExecutor.submit
             self._original_thread_init = threading.Thread.__init__
 
             # Capture as locals to avoid pylint protected-access in closures
-            wrap_callable = _wrap_callable_isolated if isolated else _wrap_callable_global
+            wrap_callable = _wrap_callable
             orig_submit = self._original_submit
             orig_thread_init = self._original_thread_init
 
@@ -158,7 +129,7 @@ class _ThreadingPatcher:
 
             threading.Thread.__init__ = patched_thread_init
             self._is_patched = True
-            logger.debug("Deepchecks threading patches applied (isolated=%s)", isolated)
+            logger.debug("Deepchecks threading patches applied")
 
         except Exception as e:
             logger.warning(f"Failed to apply threading patches: {e}")
@@ -190,14 +161,9 @@ class _ThreadingPatcher:
         return self._is_patched
 
 
-def enable_threading_propagation(isolated: bool = False) -> None:
-    """Enable threading patches for context propagation.
-
-    Args:
-        isolated: If True, propagate _isolated_context (Deepchecks isolation mode).
-                  If False, propagate global OTEL context (default mode).
-    """
-    _ThreadingPatcher().patch(isolated=isolated)
+def enable_threading_propagation() -> None:
+    """Enable threading patches for context propagation."""
+    _ThreadingPatcher().patch()
 
 
 def disable_threading_propagation() -> None:
@@ -206,123 +172,11 @@ def disable_threading_propagation() -> None:
 
 
 # =============================================================================
-# IsolatedOITracer
-# =============================================================================
-
-class IsolatedOITracer:
-    """
-    OITracer wrapper that provides complete context isolation.
-
-    - Root spans start with empty context (never inherit from global OTEL context)
-    - Child spans use isolated ContextVar (never expose to global OTEL context)
-    - Compatible with all function-wrapping instrumentors (CrewAI, LiteLLM, GoogleADK)
-
-    This prevents Deepchecks traces from being affected by other OTEL instrumentation
-    (e.g., Langfuse, Traceloop) that may also be active in the application.
-    """
-
-    def __init__(self, wrapped_tracer: OITracer):
-        """
-        Initialize the isolated tracer wrapper.
-
-        Args:
-            wrapped_tracer: The OITracer instance to wrap with isolation.
-        """
-        self._wrapped = wrapped_tracer
-
-    def __getattr__(self, name: str) -> t.Any:
-        """Delegate all other attributes to the wrapped tracer."""
-        return getattr(self._wrapped, name)
-
-    def start_span(
-        self,
-        name: str,
-        context: t.Optional[Context] = None,
-        kind: SpanKind = SpanKind.INTERNAL,
-        attributes: t.Optional[t.Mapping[str, t.Any]] = None,
-        links: t.Optional[t.Sequence[t.Any]] = None,
-        start_time: t.Optional[int] = None,
-        **kwargs: t.Any,
-    ) -> "OpenInferenceSpan":
-        """
-        Start a span using isolated context.
-
-        This ensures spans created via start_span (not just start_as_current_span)
-        also use the isolated context for parent lookup.
-        """
-        if context is None:
-            context = _isolated_context.get() or Context()
-
-        return self._wrapped.start_span(
-            name=name,
-            context=context,
-            kind=kind,
-            attributes=attributes,
-            links=links or (),
-            start_time=start_time,
-            **kwargs,
-        )
-
-    @contextmanager
-    def start_as_current_span(
-        self,
-        name: str,
-        context: t.Optional[Context] = None,
-        kind: SpanKind = SpanKind.INTERNAL,
-        attributes: t.Optional[t.Mapping[str, t.Any]] = None,
-        links: t.Optional[t.Sequence[t.Any]] = None,
-        start_time: t.Optional[int] = None,
-        record_exception: bool = True,
-        set_status_on_exception: bool = True,
-        end_on_exit: bool = True,
-        **kwargs: t.Any,
-    ) -> t.Iterator[OpenInferenceSpan]:
-        """
-        Start a span as the current span using isolated context.
-
-        This method uses an isolated ContextVar for parent lookup (never inherit
-        from global OTEL context). Spans are NOT attached to global context,
-        making them fully invisible to trace.get_current_span().
-
-        NOTE: This does NOT use thread-local context fallback to avoid affecting
-        other instrumentation (e.g., Vertex AI spans in Google ADK). Thread-local
-        is only used for LangChain which has asyncio task boundary issues.
-        """
-        if context is None:
-            # Only use _isolated_context for parent lookup, no thread-local fallback for non-LangChain
-            context = _isolated_context.get() or Context()
-
-        span = self._wrapped.start_span(
-            name=name,
-            context=context,
-            kind=kind,
-            attributes=attributes,
-            links=links or (),
-            start_time=start_time,
-            **kwargs,
-        )
-
-        new_context = set_span_in_context(span, context)
-        token = _isolated_context.set(new_context)
-
-        try:
-            yield span
-        except Exception as exc:
-            if span.is_recording():
-                if record_exception:
-                    span.record_exception(exc)
-                if set_status_on_exception:
-                    span.set_status(StatusCode.ERROR, description=f"{type(exc).__name__}: {exc}")
-            raise
-        finally:
-            _isolated_context.reset(token)
-            if end_on_exit:
-                span.end()
-
-
-# =============================================================================
 # Internal Patching Functions
 # =============================================================================
+
+_PATCHED_TRACERS: set[int] = set()
+
 
 def _patch_tracer_for_isolation(tracer: "OITracer") -> None:
     """
@@ -337,7 +191,12 @@ def _patch_tracer_for_isolation(tracer: "OITracer") -> None:
     Args:
         tracer: The OITracer instance to patch.
     """
-    # Store original methods BEFORE patching to avoid recursion
+    # Guard against double-patching (would cause recursion via captured original_start_span)
+    tracer_id = id(tracer)
+    if tracer_id in _PATCHED_TRACERS:
+        return
+    _PATCHED_TRACERS.add(tracer_id)
+
     original_start_span = tracer.start_span
 
     def isolated_start_span(
@@ -418,18 +277,29 @@ def _patch_tracer_for_isolation(tracer: "OITracer") -> None:
 
 def _patch_langchain_tracer_for_isolation(tracer: "OpenInferenceTracer") -> None:
     """
-    Patch LangChain's OpenInferenceTracer for context isolation with threading support.
+    Patch LangChain's OpenInferenceTracer for context isolation.
 
     LangChain uses callback-based parent tracking (run.parent_run_id), not context-based.
     This patch:
     1. Reads from _isolated_context when run.parent_run_id is None (threading fallback)
-    2. Falls back to thread-local context for same-thread, different-asyncio-task scenarios
-    3. Writes to both _isolated_context and thread-local after creating each span
-    4. Cleans up both contexts when spans end
+    2. Writes to _isolated_context after creating each span
+    3. Cleans up _isolated_context when spans end
 
     Args:
         tracer: The OpenInferenceTracer instance (from LangChainInstrumentor._tracer)
     """
+    # Guard against double-patching
+    tracer_id = id(tracer)
+    if tracer_id in _PATCHED_TRACERS:
+        return
+    _PATCHED_TRACERS.add(tracer_id)
+
+    # Enable inline callback execution. By default, OpenInferenceTracer inherits
+    # run_inline=False from BaseCallbackHandler, causing callbacks to run in a thread
+    # pool via run_in_executor. This breaks ContextVar propagation. Setting run_inline=True
+    # makes callbacks execute synchronously, matching Langfuse and LangGraph's own handlers.
+    tracer.run_inline = True
+
     from openinference.instrumentation.langchain._tracer import _as_utc_nano  # pylint: disable=import-outside-toplevel
 
     def patched_start_trace(run) -> None:
@@ -503,32 +373,30 @@ def _patch_langchain_tracer_for_isolation(tracer: "OpenInferenceTracer") -> None
     tracer._end_trace = patched_end_trace  # pylint: disable=protected-access
 
 
-def _isolated_get_current_span() -> "trace_api.Span":
+def _patch_google_adk_for_isolation(tracer: t.Any) -> None:
     """
-    Get the current span from isolated context, falling back to global context.
+    Patch Google ADK instrumentor for context isolation.
 
-    Some instrumentor wrappers (e.g., Google ADK) use trace.get_current_span()
-    to find the active span and set attributes on it. Since isolated spans are
-    not attached to global OTEL context, this function checks _isolated_context
-    first.
+    Applies two patches:
+    1. Base OITracer patch for start_span/start_as_current_span isolation
+    2. Redirect get_current_span() in ADK modules to check _isolated_context first,
+       since ADK's _TraceCallLlm and _TraceToolCall wrappers use get_current_span()
+       to find the active span and set attributes (openinference.span.kind, status, etc.)
     """
-    isolated_ctx = _isolated_context.get()
-    if isolated_ctx is not None:
-        span = trace_api.get_current_span(isolated_ctx)
-        if span.is_recording():
-            return span
-    return trace_api.get_current_span()
+    if isinstance(tracer, OITracer):
+        _patch_tracer_for_isolation(tracer)
+    else:
+        logger.warning("GoogleADKInstrumentor._tracer is not an OITracer, skipping base tracer patch")
 
+    def _isolated_get_current_span() -> "trace_api.Span":
+        """Get the current span from isolated context, falling back to global context."""
+        isolated_ctx = _isolated_context.get()
+        if isolated_ctx is not None:
+            span = trace_api.get_current_span(isolated_ctx)
+            if span.is_recording():
+                return span
+        return trace_api.get_current_span()
 
-def _patch_google_adk_get_current_span() -> None:
-    """
-    Patch Google ADK instrumentor modules to use isolated context for get_current_span.
-
-    Google ADK's _TraceCallLlm and _TraceToolCall wrappers use get_current_span()
-    to find the active span and set attributes (openinference.span.kind, status, etc.).
-    Since we no longer attach isolated spans to global context, we need to redirect
-    these calls to check _isolated_context first.
-    """
     try:
         import openinference.instrumentation.google_adk as adk_init  # pylint: disable=import-outside-toplevel
         import openinference.instrumentation.google_adk._wrappers as adk_wrappers  # pylint: disable=import-outside-toplevel
@@ -563,7 +431,7 @@ def apply_instrumentor_isolation(instrumentor: "BaseInstrumentor") -> None:
 
     if instrumentor.__class__.__name__ == "LangChainInstrumentor":
         _patch_langchain_tracer_for_isolation(tracer)
+    elif instrumentor.__class__.__name__ == "GoogleADKInstrumentor":
+        _patch_google_adk_for_isolation(tracer)
     elif isinstance(tracer, OITracer):
         _patch_tracer_for_isolation(tracer)
-        if instrumentor.__class__.__name__ == "GoogleADKInstrumentor":
-            _patch_google_adk_get_current_span()

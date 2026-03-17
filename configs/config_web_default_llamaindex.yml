@@ -30,7 +30,7 @@ general:
     # Job expiry - how long completed jobs stay in database before cleanup
     expiry_seconds: 86400  # 24 hours (min: 600, max: 604800/7 days)
     cors:
-      allow_origin_regex: 'http://localhost(:\d+)?|http://127.0.0.1(:\d+)?'
+      allow_origin_regex: 'http://localhost(:\d+)?|http://127.0.0.1(:\d+)?|https?://([a-z0-9-]+\.)*deepchecks\.com(:\d+)?'
       allow_methods:
         - GET
         - POST

@@ -16,7 +16,6 @@
 """NAT register function for chat researcher agent."""
 
 import logging
-import os
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -44,14 +43,12 @@ from nat.data_models.component_ref import FunctionRef
 from nat.data_models.component_ref import LLMRef
 from nat.data_models.function import FunctionBaseConfig
 
-
 from .models import ChatResearcherState
 from .utils import _extract_query_and_sources
 
 logger = logging.getLogger(__name__)
 
 _ensure_otel_redaction_registered()
-
 
 
 ########################################################

@@ -22,6 +22,7 @@ when only lightweight submodules like `aiq_agent.knowledge` are needed.
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -51,6 +52,7 @@ def _init_deepchecks() -> None:
 
     try:
         import sys
+
         # Use local copy of deepchecks_llm_client instead of installed package
         _client_path = str(Path(__file__).resolve().parent.parent / "client")
         if _client_path not in sys.path:
@@ -60,7 +62,7 @@ def _init_deepchecks() -> None:
         from deepchecks_llm_client.otel import LanggraphIntegration
 
         dc_host = os.environ.get("DC_STAGING_HOST", "https://app.llm.deepchecks.com/")
-        dc_app_name = os.environ.get("DC_APP_NAME", "rotem_nvidia1")
+        dc_app_name = os.environ.get("DC_APP_NAME", "Nvidia AI-Q research agent")
         dc_version_name = os.environ.get("DC_VERSION_NAME", "v1")
 
         LanggraphIntegration().register_dc_exporter(
@@ -85,7 +87,6 @@ __all__ = [
     "deep_research_agent",
 ]
 
-from typing import Any
 
 # Cache for lazy-loaded modules to avoid repeated imports
 _lazy_imports: dict[str, Any] = {}

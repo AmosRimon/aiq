@@ -34,9 +34,13 @@ from nat.front_ends.fastapi.fastapi_front_end_plugin import FastApiFrontEndPlugi
 from nat.front_ends.fastapi.fastapi_front_end_plugin_worker import FastApiFrontEndPluginWorker
 from nat.front_ends.fastapi.fastapi_front_end_plugin_worker import FastApiFrontEndPluginWorkerBase
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .routes.collections import add_collection_routes
 from .routes.documents import add_document_routes
+
+# Regex matching origins from *.internaldeep.com and *.deepchecks.com
+CORS_ORIGIN_REGEX = r"^https?://([a-zA-Z0-9-]+\.)*((internaldeep|deepchecks)\.com)$"
 
 
 class APIExtensionsConfig(FastApiFrontEndConfig, name="aira_frontend"):
@@ -50,6 +54,14 @@ class APIExtensionsWorker(FastApiFrontEndPluginWorker):
     @override
     async def add_routes(self, app: FastAPI, builder: WorkflowBuilder):
         await super().add_routes(app, builder)
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origin_regex=CORS_ORIGIN_REGEX,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
         rag_ingest_url = os.getenv("RAG_INGEST_URL", "http://ingestor-server:8082/v1")
 

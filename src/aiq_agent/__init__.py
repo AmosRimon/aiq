@@ -61,7 +61,7 @@ def _init_deepchecks() -> None:
         from deepchecks_llm_client.data_types import EnvType
         from deepchecks_llm_client.otel import LanggraphIntegration
 
-        dc_host = os.environ.get("DC_STAGING_HOST", "https://app.llm.deepchecks.com/")
+        dc_host = os.environ.get("DC_STAGING_HOST", "https://llm.staging.internaldeep.com/")
         dc_app_name = os.environ.get("DC_APP_NAME", "Nvidia AI-Q research agent")
         dc_version_name = os.environ.get("DC_VERSION_NAME", "v1")
 
